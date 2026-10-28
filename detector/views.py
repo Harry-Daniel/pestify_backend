@@ -1,10 +1,10 @@
 import os
+import threading
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.core.files.storage import default_storage
-from tensorflow.lite.python.interpreter import Interpreter
+from ai_edge_litert.interpreter import Interpreter
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), 'tflite_model')
 MODEL_PATH = os.path.join(MODEL_DIR, 'best_float32.tflite')
@@ -26,6 +26,8 @@ in_info = interpreter.get_input_details()[0]
 out_info = interpreter.get_output_details()[0]
 IN_H, IN_W = int(in_info['shape'][1]), int(in_info['shape'][2])  # e.g., 224x224
 IN_DTYPE = in_info['dtype']  # should be <class 'numpy.float32'> per your debug
+# The interpreter is shared across requests and is not thread-safe
+interpreter_lock = threading.Lock()
 
 def softmax(z: np.ndarray) -> np.ndarray:
     z = z - np.max(z)
@@ -38,24 +40,27 @@ def predict_pest(request):
         return JsonResponse({'error': 'POST request with image required'}, status=400)
 
     img_file = request.FILES['image']
-    img_path = default_storage.save('uploads/' + img_file.name, img_file)
-    full_path = os.path.join('media', img_path)
 
     try:
         # === PREPROCESS ===
         # Model wants raw 0–255 float32, RGB, plain resize
-        img = Image.open(full_path).convert('RGB').resize((IN_W, IN_H), Image.BILINEAR)
+        img = Image.open(img_file).convert('RGB').resize((IN_W, IN_H), Image.BILINEAR)
         x = np.asarray(img, dtype=np.float32)        # keep 0–255 range
         # DO NOT divide by 255.0
         x = np.expand_dims(x, axis=0)               # shape (1, H, W, 3)
 
         # === INFERENCE ===
-        interpreter.set_tensor(int(in_info['index']), x)
-        interpreter.invoke()
-        preds = interpreter.get_tensor(int(out_info['index']))[0]  # (C,)
+        with interpreter_lock:
+            interpreter.set_tensor(int(in_info['index']), x)
+            interpreter.invoke()
+            preds = interpreter.get_tensor(int(out_info['index']))[0].copy()  # (C,)
 
         # === POSTPROCESS ===
-        probs = softmax(preds)                       # model head behaves like softmax
+        # The exported head already applies softmax; only normalise raw logits
+        if np.all(preds >= 0) and np.isclose(preds.sum(), 1.0, atol=1e-3):
+            probs = preds
+        else:
+            probs = softmax(preds)
         C = int(probs.shape[0])
         if len(CLASS_NAMES) != C:
             return JsonResponse({
@@ -80,10 +85,7 @@ def predict_pest(request):
             'top_k': top3
         })
 
+    except UnidentifiedImageError:
+        return JsonResponse({'error': 'Uploaded file is not a valid image'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-    finally:
-        try:
-            os.remove(full_path)
-        except Exception:
-            pass
