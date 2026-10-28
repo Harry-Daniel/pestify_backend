@@ -5,6 +5,9 @@ custom-trained image classification model (exported to TensorFlow Lite) and
 returns the most likely pest along with confidence scores. It powers the
 Pestify mobile app.
 
+Pestify was built as a final-year university project to help farmers identify
+common crop pests early, so they can respond before an infestation spreads.
+
 **Detectable classes:** aphid, armyworm, diamondback moth, grasshopper,
 whitefly, and `unknown` (no recognised pest).
 
@@ -100,3 +103,15 @@ detector/
   tests.py            Endpoint tests
   tflite_model/       Trained model (best_float32.tflite)
 ```
+
+## Credits
+
+- **Backend & API** — [Harry-Daniel](https://github.com/Harry-Daniel)
+- **Model training** — my project teammate, who trained the pest classification model
+
+## License
+
+Copyright © 2025 the Pestify authors. All rights reserved.
+
+This repository is published for viewing as part of a portfolio. No license is
+granted to copy, modify, or redistribute the code or the trained model.
